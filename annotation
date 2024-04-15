@@ -1,0 +1,102 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using Microsoft.Xrm.Sdk;
+using Microsoft.Xrm.Sdk.Query;
+
+
+namespace OnAnnotationDelete
+{
+    public class DeleteNote : IPlugin
+    {
+        public void Execute(IServiceProvider serviceProvider)
+        {
+
+            IPluginExecutionContext context = (IPluginExecutionContext)serviceProvider.GetService(typeof(IPluginExecutionContext));
+            IOrganizationServiceFactory serviceFactory = (IOrganizationServiceFactory)serviceProvider.GetService(typeof(IOrganizationServiceFactory));
+            IOrganizationService service = serviceFactory.CreateOrganizationService(context.UserId);
+            ITracingService traceService = (ITracingService)serviceProvider.GetService(typeof(ITracingService));
+
+            if (context.InputParameters.Contains("Target") && context.InputParameters["Target"] is EntityReference)
+            {
+                if (context.Depth > 1)
+                {
+                    return;
+                }
+                // Retrieve the target entity from the context.
+                EntityReference Notes = (EntityReference)context.InputParameters["Target"];
+
+                if (Notes.LogicalName != "annotation")
+                    return;
+
+                try
+                {
+                    #region ON Delete of Note
+
+                    if (context.MessageName.ToLower() == "delete" && context.PreEntityImages.Contains("PreImage"))
+                    {
+                        Entity preImage = (Entity)context.PreEntityImages["PreImage"];
+
+                        if (preImage.Attributes.Contains("objectid") && preImage.GetAttributeValue<EntityReference>("objectid").LogicalName == "contact")
+                        {
+                            traceService.Trace("Preimage Contains objectid");
+                            Guid contactId = preImage.GetAttributeValue<EntityReference>("objectid").Id;
+
+                            QueryExpression query = new QueryExpression("annotation");
+                            query.ColumnSet = new ColumnSet(true);
+                            //query.Criteria.AddCondition("objecttypecode", ConditionOperator.Equal, "contact");
+                            query.Criteria.AddCondition("objectid", ConditionOperator.Equal, contactId);
+                            query.Orders.Add(new OrderExpression("modifiedon", OrderType.Descending));
+
+                            EntityCollection notes = service.RetrieveMultiple(query);
+
+                            traceService.Trace("PLugin Query Executed");
+
+                            //Check if No Notes are available:
+                            if (notes.Entities.Count == 0)
+                            {
+                                // If no notes are left, update contact description field to "N/A"
+                                Entity contactToUpdate = new Entity("contact");
+                                contactToUpdate.Id = contactId;
+                                contactToUpdate["crebb_description"] = "N/A";
+                                service.Update(contactToUpdate);
+                                traceService.Trace("Contact Description Updated (No Notes)");
+                            }
+
+                            else if (notes.Entities.Count > 0 && notes.Entities[0].Id != preImage.Id)
+                            {
+                                traceService.Trace("Query Retereived Records");
+                                Entity lastNote = notes.Entities[0];
+                                string noteText = lastNote.GetAttributeValue<string>("notetext");
+
+                                string StripednoteText = StripHtmlTagsAndEntities(noteText);
+
+                                Entity contactToUpdate = new Entity("contact");
+                                contactToUpdate.Id = contactId;
+                                contactToUpdate["crebb_description"] = StripednoteText;
+
+                                service.Update(contactToUpdate);
+                                traceService.Trace("Contact Updated");
+                            }
+                        }
+                    }
+                    #endregion
+                }
+                catch (Exception ex)
+                {
+                    throw new InvalidPluginExecutionException(ex.Message);
+                }
+
+            }
+
+        }
+        private string StripHtmlTagsAndEntities(string html)
+        {
+            // Remove HTML tags and decode HTML entities
+            string plainText = System.Net.WebUtility.HtmlDecode(html);
+            return System.Text.RegularExpressions.Regex.Replace(plainText, "<.*?>", String.Empty);
+        }
+    }
+}
