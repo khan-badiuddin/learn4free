@@ -1,0 +1,114 @@
+using Microsoft.Xrm.Sdk;
+using Microsoft.Xrm.Sdk.Query;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Net;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace OnNoteCreateandUpdateofNotesDescription
+{
+    public class NotesCreateandUpdate : IPlugin
+
+    {
+        public void Execute(IServiceProvider serviceProvider)
+        {
+           
+            IPluginExecutionContext context = (IPluginExecutionContext)serviceProvider.GetService(typeof(IPluginExecutionContext));
+            IOrganizationServiceFactory serviceFactory = (IOrganizationServiceFactory)serviceProvider.GetService(typeof(IOrganizationServiceFactory));
+            IOrganizationService service = serviceFactory.CreateOrganizationService(context.UserId);
+            ITracingService traceService = (ITracingService)serviceProvider.GetService(typeof(ITracingService));
+
+            if (context.InputParameters.Contains("Target") && context.InputParameters["Target"] is Entity)
+            {
+                if (context.Depth > 1)
+                
+                   return;
+                
+                    // Retrieve the target entity from the context.
+                Entity Notes = (Entity)context.InputParameters["Target"];
+
+                if (Notes.LogicalName != "annotation")
+                   return;
+
+                try
+                {
+                     #region On Create of Note
+
+                    if (context.MessageName.ToLower() == "create")
+                    {
+                        EntityReference ContactRef = Notes.GetAttributeValue<EntityReference>("objectid");
+                        if (ContactRef != null)
+                        {
+                          string noteDescription = Notes.GetAttributeValue<string>("notetext");
+                          UpdateContactNoteDescription(serviceProvider, ContactRef, noteDescription);
+                        }
+                    }
+                    #endregion
+
+                    #region On Update of Note
+
+                    if (context.MessageName.ToLower() == "update")
+                    {
+                        EntityReference contactRef = null;
+                        string newNoteDescription = null;
+                        var columnSet = new Microsoft.Xrm.Sdk.Query.ColumnSet(
+                                "objectid",
+                                "notetext"
+                        );
+                        Entity note = service.Retrieve(Notes.LogicalName, Notes.Id, columnSet);
+
+                        if (note.Contains("objectid") && note["objectid"] is EntityReference)
+                        {
+                            contactRef = note.GetAttributeValue<EntityReference>("objectid");
+                        }
+                        if (note.Contains("notetext"))
+                        {
+                            newNoteDescription = note.GetAttributeValue<string>("notetext");
+                        }
+                        if (contactRef != null && !string.IsNullOrEmpty(newNoteDescription))
+                        {
+                            UpdateContactNoteDescription(serviceProvider, contactRef, newNoteDescription);
+                        }
+                    }
+                    #endregion
+
+                }
+                catch (Exception ex)
+                {
+                    throw new InvalidPluginExecutionException(ex.Message);
+                }
+            }
+           
+        }
+        private void UpdateContactNoteDescription(IServiceProvider serviceProvider, EntityReference contactRef, string noteDescription)
+        {
+                IOrganizationServiceFactory serviceFactory = (IOrganizationServiceFactory)serviceProvider.GetService(typeof(IOrganizationServiceFactory));
+                IOrganizationService service = serviceFactory.CreateOrganizationService(null);
+
+            try
+            {
+                Entity contact = service.Retrieve(contactRef.LogicalName, contactRef.Id, new Microsoft.Xrm.Sdk.Query.ColumnSet("wiz_notestext"));
+                noteDescription = StripHtmlTagsAndEntities(noteDescription);
+                string existingNoteText = contact.GetAttributeValue<string>("wiz_notestext") ?? "";
+                string stripedexistingNoteText = StripHtmlTagsAndEntities(existingNoteText);
+                stripedexistingNoteText = noteDescription;
+                contact["wiz_notestext"] = stripedexistingNoteText;
+                service.Update(contact);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidPluginExecutionException($"An error occurred while updating the contact's note text: {ex.Message}", ex);
+            }
+        }
+        private string StripHtmlTagsAndEntities(string html)
+        {
+            // Remove HTML tags and decode HTML entities
+            string plainText = System.Net.WebUtility.HtmlDecode(html);
+            return System.Text.RegularExpressions.Regex.Replace(plainText, "<.*?>", String.Empty);
+        }
+
+
+    }
+}
