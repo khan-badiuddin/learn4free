@@ -1,99 +1,36 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using Microsoft.Xrm.Sdk;
-using Microsoft.Xrm.Sdk.Query;
+function openQuickCreateFormByName(entityName, formName) {
+    Xrm.WebApi.online.retrieveMultipleRecords("systemform", `?$filter=objecttypecode eq '${entityName}' and name eq '${formName}' and type eq 3`).then(
+        function success(result) {
+            if (result.entities.length > 0) {
+                var formId = result.entities[0].formid;
 
+                var entityFormOptions = {};
+                entityFormOptions["entityName"] = entityName;
+                entityFormOptions["formId"] = formId;
 
-namespace OnAnnotationDelete
-{
-    public class DeleteNote : IPlugin
-    {
-        public void Execute(IServiceProvider serviceProvider)
-        {
-
-            IPluginExecutionContext context = (IPluginExecutionContext)serviceProvider.GetService(typeof(IPluginExecutionContext));
-            IOrganizationServiceFactory serviceFactory = (IOrganizationServiceFactory)serviceProvider.GetService(typeof(IOrganizationServiceFactory));
-            IOrganizationService service = serviceFactory.CreateOrganizationService(context.UserId);
-            ITracingService traceService = (ITracingService)serviceProvider.GetService(typeof(ITracingService));
-
-            if (context.InputParameters.Contains("Target") && context.InputParameters["Target"] is EntityReference)
-            {
-                if (context.Depth > 1)
-                {
-                    return;
-                }
-                // Retrieve the target entity from the context.
-                EntityReference Notes = (EntityReference)context.InputParameters["Target"];
-
-                if (Notes.LogicalName != "annotation")
-                    return;
-
-                try
-                {
-                    #region ON Delete of Note
-
-                    if (context.MessageName.ToLower() == "delete" && context.PreEntityImages.Contains("PreImage"))
-                    {
-                        Entity preImage = (Entity)context.PreEntityImages["PreImage"];
-
-                        if (preImage.Attributes.Contains("objectid") && preImage.GetAttributeValue<EntityReference>("objectid").LogicalName == "contact")
-                        {
-                            traceService.Trace("Preimage Contains objectid");
-                            Guid contactId = preImage.GetAttributeValue<EntityReference>("objectid").Id;
-
-                            QueryExpression query = new QueryExpression("annotation");
-                            query.ColumnSet = new ColumnSet(true);
-                            //query.Criteria.AddCondition("objecttypecode", ConditionOperator.Equal, "contact");
-                            query.Criteria.AddCondition("objectid", ConditionOperator.Equal, contactId);
-                            query.Orders.Add(new OrderExpression("createdon", OrderType.Descending));
-
-                            EntityCollection notes = service.RetrieveMultiple(query);
-
-                            traceService.Trace("PLugin Query Executed");
-
-                            if (notes.Entities.Count > 0 && notes.Entities[0].Id != preImage.Id)
-                            {
-                                traceService.Trace("Query Retereived Records");
-                                Entity lastNote = notes.Entities[0];
-                                string noteText = lastNote.GetAttributeValue<string>("notetext");
-
-                                string StripednoteText = StripHtmlTagsAndEntities(noteText);
-
-                                Entity contactToUpdate = new Entity("contact");
-                                contactToUpdate.Id = contactId;
-                                contactToUpdate["wiz_notestext"] = StripednoteText;
-
-                                service.Update(contactToUpdate);
-                                traceService.Trace("Contact Updated");
-                            }
-                            else
-                            {
-                                Entity contactToUpdate = new Entity("contact");
-                                contactToUpdate.Id = contactId;
-                                contactToUpdate["wiz_notestext"] = "N/A";
-                                service.Update(contactToUpdate);
-                                traceService.Trace("Contact Updatedd with N/A as there are no notes associated");
-                            }
-                        }
+                // Open the quick create form with the retrieved form ID
+                Xrm.Navigation.openForm(entityFormOptions).then(
+                    function (success) {
+                        console.log("Quick create form opened successfully.");
+                    },
+                    function (error) {
+                        console.log("Error opening quick create form: " + error.message);
                     }
-                    #endregion
-                }
-                catch (Exception ex)
-                {
-                    throw new InvalidPluginExecutionException(ex.Message);
-                }
-
+                );
+            } else {
+                console.log("Quick create form not found.");
             }
+        },
+        function (error) {
+            console.log("Error retrieving quick create form ID: " + error.message);
+        }
+    );
+}
 
-        }
-        private string StripHtmlTagsAndEntities(string html)
-        {
-            // Remove HTML tags and decode HTML entities
-            string plainText = System.Net.WebUtility.HtmlDecode(html);
-            return System.Text.RegularExpressions.Regex.Replace(plainText, "<.*?>", String.Empty);
-        }
-    }
+function openSpecificQuickCreateFormOnSubgrid(executionContext) {
+    // var formContext = executionContext.getFormContext();
+    var entityName = "ge_initiativeprogresscmquestions"; 
+    var formName = "Progress Card CM Questions"; 
+
+    openQuickCreateFormByName(entityName, formName);
 }
