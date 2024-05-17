@@ -1,0 +1,250 @@
+using Microsoft.Xrm.Sdk;
+using Microsoft.Xrm.Sdk.Query;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
+
+namespace ActionAnnotation
+{
+    public class ActionAnnotation :IPlugin
+    {
+        public void Execute(IServiceProvider serviceProvider)
+        {
+            // Obtain the execution context from the service provider.
+            IPluginExecutionContext context = (IPluginExecutionContext)serviceProvider.GetService(typeof(IPluginExecutionContext));
+            // Obtain the tracing service
+            ITracingService tracingService = (ITracingService)serviceProvider.GetService(typeof(ITracingService));
+
+            try
+            {
+                tracingService.Trace("Plugin execution started.");
+
+                IOrganizationServiceFactory serviceFactory = (IOrganizationServiceFactory)serviceProvider.GetService(typeof(IOrganizationServiceFactory));
+                IOrganizationService service = serviceFactory.CreateOrganizationService(context.UserId);
+
+                // Handle Action entity operations
+                if (context.PrimaryEntityName.ToLower() == "xom_guyanalearningapplicationaction" && (context.MessageName.ToLower() == "create" || context.MessageName.ToLower() == "update"))
+                {
+                    tracingService.Trace("Plugin triggered for Action entity.");
+
+                    if (context.InputParameters.Contains("Target") && context.InputParameters["Target"] is Entity)
+                    {
+                        Entity targetEntity = (Entity)context.InputParameters["Target"];
+
+                        if (targetEntity.Attributes.Contains("llm_notes"))
+                        {
+                            tracingService.Trace("Notes description field is being updated.");
+
+                            string notesDescription = StripHTML(targetEntity.GetAttributeValue<string>("llm_notes"));
+
+                            if (context.MessageName.ToLower() == "create")
+                            {
+                                tracingService.Trace("Creating new annotation for Action.");
+
+                                Entity noteEntity = new Entity("annotation");
+                                noteEntity["objectid"] = new EntityReference("xom_guyanalearningapplicationaction", targetEntity.Id);
+                                //noteEntity["subject"] = "Action Note";
+                                noteEntity["notetext"] = notesDescription;
+                                service.Create(noteEntity);
+
+                                tracingService.Trace("New annotation created for Action.");
+                            }
+                            else if (context.MessageName.ToLower() == "update")
+                            {
+                                tracingService.Trace("Updating existing annotation for Action.");
+
+                                Entity latestNote = GetLatestNoteForAction(targetEntity.Id, service);
+
+                                if (latestNote != null)
+                                {
+                                    tracingService.Trace("Latest note found for Action.");
+
+                                    string previousNoteText = latestNote.GetAttributeValue<string>("notetext");
+
+                                    if (notesDescription != previousNoteText)
+                                    {
+                                        tracingService.Trace("Notes description is changed. Updating annotation.");
+
+                                        latestNote["notetext"] = notesDescription;
+                                        service.Update(latestNote);
+
+                                        tracingService.Trace("Annotation updated for Action.");
+                                    }
+                                    else
+                                    {
+                                        tracingService.Trace("Notes description is not changed. No update needed.");
+                                    }
+                                }
+                                else
+                                {
+                                    tracingService.Trace("No existing note found for Action. Creating new annotation.");
+
+                                    Entity noteEntity = new Entity("annotation");
+                                    noteEntity["objectid"] = new EntityReference("xom_guyanalearningapplicationaction", targetEntity.Id);
+                                    //noteEntity["subject"] = "Action Note";
+                                    noteEntity["notetext"] = notesDescription;
+                                    service.Create(noteEntity);
+
+                                    tracingService.Trace("New annotation created for Action.");
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Handle Annotation entity operations
+                if (context.PrimaryEntityName.ToLower() == "annotation" && (context.MessageName.ToLower() == "create" || context.MessageName.ToLower() == "update"))
+                {
+                    tracingService.Trace("Plugin triggered for Annotation entity.");
+
+                    if (context.InputParameters.Contains("Target") && context.InputParameters["Target"] is Entity)
+                    {
+                        Entity targetEntity = (Entity)context.InputParameters["Target"];
+
+                        if (targetEntity.Attributes.Contains("notetext"))
+                        {
+                            tracingService.Trace("Note text field is being updated.");
+
+                            Guid actionId;
+                            if (context.MessageName.ToLower() == "create")
+                            {
+                                tracingService.Trace("Creating a new annotation.");
+
+                                EntityReference objectRef = targetEntity.GetAttributeValue<EntityReference>("objectid");
+                                if (objectRef == null || objectRef.LogicalName.ToLower() != "xom_guyanalearningapplicationaction")
+                                {
+                                    tracingService.Trace("Annotation is not related to an Action.");
+                                    return;
+                                }
+                                actionId = objectRef.Id;
+                            }
+                            else
+                            {
+                                tracingService.Trace("Updating an existing annotation.");
+
+                                Entity preImage = context.PreEntityImages.Contains("PreImage") ? context.PreEntityImages["PreImage"] : null;
+                                if (preImage == null)
+                                {
+                                    tracingService.Trace("PreImage is not available.");
+                                    return;
+                                }
+                                actionId = ((EntityReference)preImage["objectid"]).Id;
+                            }
+
+                            Entity action = service.Retrieve("xom_guyanalearningapplicationaction", actionId, new ColumnSet("llm_notes"));
+
+                            string currentDescription = action.GetAttributeValue<string>("llm_notes");
+                            string newNoteText = targetEntity.GetAttributeValue<string>("notetext");
+                            string strippedNoteText = StripHTML(newNoteText);
+
+                            if (currentDescription != strippedNoteText)
+                            {
+                                tracingService.Trace("Action description is different from note text. Updating Action description.");
+
+                                action["llm_notes"] = strippedNoteText;
+                                service.Update(action);
+
+                                tracingService.Trace("Action description updated.");
+                            }
+                            else
+                            {
+                                tracingService.Trace("Action description is the same as note text. No update needed.");
+                            }
+                        }
+                    }
+                }
+                // Handle deletion of Annotation entity
+                if (context.MessageName.ToLower() == "delete" && context.PrimaryEntityName.ToLower() == "annotation")
+                {
+                    tracingService.Trace("Plugin triggered for Annotation deletion.");
+
+                    Entity preImage = context.PreEntityImages.Contains("PreImage") ? context.PreEntityImages["PreImage"] as Entity : null;
+                    if (preImage == null || !preImage.Contains("objectid") || preImage.GetAttributeValue<EntityReference>("objectid").LogicalName.ToLower() != "xom_guyanalearningapplicationaction")
+                    {
+                        tracingService.Trace("PreImage is not available or does not contain valid data.");
+                        return;
+                    }
+
+                    Guid actionId = preImage.GetAttributeValue<EntityReference>("objectid").Id;
+
+                    EntityCollection previousNotes = GetPreviousNotesForAction(actionId, preImage.Id, service);
+
+                    if (previousNotes.Entities.Count > 0)
+                    {
+                        Entity previousNote = previousNotes.Entities[0];
+
+                        tracingService.Trace("Previous note found. Updating action description.");
+
+                        Entity accountEntity = service.Retrieve("action", actionId, new ColumnSet("llm_notes"));
+
+                        string previousNoteText = previousNote.GetAttributeValue<string>("notetext");
+                        string strippedPreviousNoteText = StripHTML(previousNoteText);
+
+                        accountEntity["llm_notes"] = strippedPreviousNoteText;
+                        service.Update(accountEntity);
+
+                        tracingService.Trace("Action description updated with previous note text.");
+                    }
+                    else
+                    {
+                        tracingService.Trace("No previous note found for the action.");
+                    }
+                }
+
+            }
+            catch (Exception ex)
+            {
+                tracingService.Trace("Error occurred: " + ex.ToString());
+                throw new InvalidPluginExecutionException("An error occurred in the CreateNotes plugin.", ex);
+            }
+            finally
+            {
+                tracingService.Trace("Plugin execution completed.");
+            }
+        }
+
+        public static string StripHTML(string input)
+        {
+            if (string.IsNullOrWhiteSpace(input))
+                return string.Empty;
+
+            // Remove HTML tags and &nbsp;
+            string output = Regex.Replace(input, "<.*?>", String.Empty);
+            output = Regex.Replace(output, "&nbsp;", " ", RegexOptions.IgnoreCase);
+            return output;
+        }
+
+        private Entity GetLatestNoteForAction(Guid actionId, IOrganizationService service)
+        {
+            QueryExpression query = new QueryExpression("annotation");
+            query.ColumnSet = new ColumnSet("annotationid", "notetext");
+            query.Criteria.AddCondition("objectid", ConditionOperator.Equal, actionId);
+            query.AddOrder("createdon", OrderType.Descending);
+            query.TopCount = 1;
+
+            EntityCollection notes = service.RetrieveMultiple(query);
+            if (notes.Entities.Count > 0)
+            {
+                return notes.Entities[0];
+            }
+            return null;
+        }
+
+        private EntityCollection GetPreviousNotesForAction(Guid actionId, Guid latestNoteId, IOrganizationService service)
+        {
+            QueryExpression query = new QueryExpression("annotation");
+            query.ColumnSet = new ColumnSet("annotationid", "notetext");
+            query.Criteria.AddCondition("objectid", ConditionOperator.Equal, actionId);
+            query.Criteria.AddCondition("annotationid", ConditionOperator.NotEqual, latestNoteId);
+            query.AddOrder("createdon", OrderType.Descending);
+            query.TopCount = 1;
+
+            return service.RetrieveMultiple(query);
+        }
+
+
+    }
+}
