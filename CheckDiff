@@ -1,245 +1,68 @@
-using System;
-using System.ServiceModel;
-using System.Text.RegularExpressions;
-using Microsoft.Xrm.Sdk;
-using Microsoft.Xrm.Sdk.Query;
+### User Story for Notes Management in Contact Entity Timeline in MS CRM
 
-namespace CreateNotes
-{
-    public class CreateNotes : IPlugin
-    {
-        public void Execute(IServiceProvider serviceProvider)
-        {
-            // Obtain the execution context from the service provider.
-            IPluginExecutionContext context = (IPluginExecutionContext)serviceProvider.GetService(typeof(IPluginExecutionContext));
-            // Obtain the tracing service
-            ITracingService tracingService = (ITracingService)serviceProvider.GetService(typeof(ITracingService));
+#### Title: Synchronize Notes Between Contact Entity Timeline and Custom Field
 
-            try
-            {
-                tracingService.Trace("Plugin execution started.");
+#### **User Story 1: Adding Notes to Timeline**
 
-                IOrganizationServiceFactory serviceFactory = (IOrganizationServiceFactory)serviceProvider.GetService(typeof(IOrganizationServiceFactory));
-                IOrganizationService service = serviceFactory.CreateOrganizationService(context.UserId);
+**As a** CRM user,  
+**I want** the title of a newly added note in the contact entity timeline to be reflected in a custom field called "Notes",  
+**so that** I can quickly view the latest note from the contact's main form without navigating through the timeline.
 
-                // Handle Action entity operations
-                if (context.PrimaryEntityName.ToLower() == "xom_guyanalearningapplicationaction" && (context.MessageName.ToLower() == "create" || context.MessageName.ToLower() == "update"))
-                {
-                    tracingService.Trace("Plugin triggered for Action entity.");
+**Acceptance Criteria:**
+1. When a note is added to the contact entity timeline, the note title should be updated in the "Notes" custom field.
+2. If multiple notes are added, the most recent note title should always be displayed in the "Notes" custom field.
 
-                    if (context.InputParameters.Contains("Target") && context.InputParameters["Target"] is Entity)
-                    {
-                        Entity targetEntity = (Entity)context.InputParameters["Target"];
+#### **User Story 2: Updating Notes in Timeline**
 
-                        if (targetEntity.Attributes.Contains("llm_notes"))
-                        {
-                            tracingService.Trace("Notes description field is being updated.");
+**As a** CRM user,  
+**I want** the latest note in the contact entity timeline to reflect in the "Notes" custom field when a note is updated,  
+**so that** the contact's main form always shows the most current note information.
 
-                            string notesDescription = StripHTML(targetEntity.GetAttributeValue<string>("llm_notes"));
+**Acceptance Criteria:**
+1. When a note in the contact entity timeline is updated, the "Notes" custom field should be updated with the latest note title.
+2. The update should occur immediately after the note is modified.
 
-                            if (context.MessageName.ToLower() == "create")
-                            {
-                                tracingService.Trace("Creating new annotation for Action.");
+#### **User Story 3: Deleting Notes from Timeline**
 
-                                Entity noteEntity = new Entity("annotation");
-                                noteEntity["objectid"] = new EntityReference("xom_guyanalearningapplicationaction", targetEntity.Id);
-                                //noteEntity["subject"] = "Action Note";
-                                noteEntity["notetext"] = notesDescription;
-                                service.Create(noteEntity);
+**As a** CRM user,  
+**I want** the "Notes" custom field to reflect the latest note when a note is deleted from the contact entity timeline,  
+**so that** the contact's main form remains up-to-date with the most recent note information.
 
-                                tracingService.Trace("New annotation created for Action.");
-                            }
-                            else if (context.MessageName.ToLower() == "update")
-                            {
-                                tracingService.Trace("Updating existing annotation for Action.");
+**Acceptance Criteria:**
+1. When a note is deleted from the contact entity timeline, the "Notes" custom field should update to reflect the next most recent note.
+2. If all notes are deleted, the "Notes" custom field should display "N/A".
 
-                                Entity latestNote = GetLatestNoteForAction(targetEntity.Id, service);
+#### **User Story 4: Handling All Notes Deletion**
 
-                                if (latestNote != null)
-                                {
-                                    tracingService.Trace("Latest note found for Action.");
+**As a** CRM user,  
+**I want** the "Notes" custom field to display "N/A" when all notes are deleted from the contact entity timeline,  
+**so that** it is clear there are no notes associated with the contact.
 
-                                    string previousNoteText = latestNote.GetAttributeValue<string>("notetext");
+**Acceptance Criteria:**
+1. When all notes are deleted from a contact entity, the "Notes" custom field should be updated to "N/A".
+2. This update should occur immediately after the last note is deleted.
 
-                                    if (notesDescription != previousNoteText)
-                                    {
-                                        tracingService.Trace("Notes description is changed. Updating annotation.");
+#### **User Story 5: Updating Notes via Excel Online**
 
-                                        latestNote["notetext"] = notesDescription;
-                                        service.Update(latestNote);
+**As a** CRM user,  
+**I want** changes made to the "Notes" custom field in Contact's Excel Online to update the relevant note in the timeline,  
+**so that** my changes in Excel are synchronized with the CRM system.
 
-                                        tracingService.Trace("Annotation updated for Action.");
-                                    }
-                                    else
-                                    {
-                                        tracingService.Trace("Notes description is not changed. No update needed.");
-                                    }
-                                }
-                                else
-                                {
-                                    tracingService.Trace("No existing note found for Action. Creating new annotation.");
+**Acceptance Criteria:**
+1. When the "Notes" custom field is updated in Contact's Excel Online, the corresponding note in the contact entity timeline should be updated.
+2. The update should reflect in the CRM system immediately or after the next synchronization.
 
-                                    Entity noteEntity = new Entity("annotation");
-                                    noteEntity["objectid"] = new EntityReference("xom_guyanalearningapplicationaction", targetEntity.Id);
-                                    //noteEntity["subject"] = "Action Note";
-                                    noteEntity["notetext"] = notesDescription;
-                                    service.Create(noteEntity);
+#### **User Story 6: Creating New Contact from Excel Online**
 
-                                    tracingService.Trace("New annotation created for Action.");
-                                }
-                            }
-                        }
-                    }
-                }
+**As a** CRM user,  
+**I want** the creation of a new contact in Excel Online with a value in the "Notes" custom field to automatically create a note in the timeline,  
+**so that** the new contact's notes are recorded in both Excel and CRM.
 
-                // Handle Annotation entity operations
-                if (context.PrimaryEntityName.ToLower() == "annotation" && (context.MessageName.ToLower() == "create" || context.MessageName.ToLower() == "update"))
-                {
-                    tracingService.Trace("Plugin triggered for Annotation entity.");
+**Acceptance Criteria:**
+1. When a new contact is created from Excel Online with a value in the "Notes" custom field, a note should be created in the contact entity timeline.
+2. The note created should match the value entered in the "Notes" custom field.
+3. This process should be seamless and occur without manual intervention.
 
-                    if (context.InputParameters.Contains("Target") && context.InputParameters["Target"] is Entity)
-                    {
-                        Entity targetEntity = (Entity)context.InputParameters["Target"];
+---
 
-                        if (targetEntity.Attributes.Contains("notetext"))
-                        {
-                            tracingService.Trace("Note text field is being updated.");
-
-                            Guid actionId;
-                            if (context.MessageName.ToLower() == "create")
-                            {
-                                tracingService.Trace("Creating a new annotation.");
-
-                                EntityReference objectRef = targetEntity.GetAttributeValue<EntityReference>("objectid");
-                                if (objectRef == null || objectRef.LogicalName.ToLower() != "xom_guyanalearningapplicationaction")
-                                {
-                                    tracingService.Trace("Annotation is not related to an Action.");
-                                    return;
-                                }
-                                actionId = objectRef.Id;
-                            }
-                            else
-                            {
-                                tracingService.Trace("Updating an existing annotation.");
-
-                                Entity preImage = context.PreEntityImages.Contains("PreImage") ? context.PreEntityImages["PreImage"] : null;
-                                if (preImage == null)
-                                {
-                                    tracingService.Trace("PreImage is not available.");
-                                    return;
-                                }
-                                actionId = ((EntityReference)preImage["objectid"]).Id;
-                            }
-
-                            Entity action = service.Retrieve("xom_guyanalearningapplicationaction", actionId, new ColumnSet("llm_notes"));
-
-                            string currentDescription = action.GetAttributeValue<string>("llm_notes");
-                            string newNoteText = targetEntity.GetAttributeValue<string>("notetext");
-                            string strippedNoteText = StripHTML(newNoteText);
-
-                            if (currentDescription != strippedNoteText)
-                            {
-                                tracingService.Trace("Action description is different from note text. Updating Action description.");
-
-                                action["llm_notes"] = strippedNoteText;
-                                service.Update(action);
-
-                                tracingService.Trace("Action description updated.");
-                            }
-                            else
-                            {
-                                tracingService.Trace("Action description is the same as note text. No update needed.");
-                            }
-                        }
-                    }
-                }
-                // Handle deletion of Annotation entity
-                if (context.MessageName.ToLower() == "delete" && context.PrimaryEntityName.ToLower() == "annotation")
-                {
-                    tracingService.Trace("Plugin triggered for Annotation deletion.");
-
-                    Entity preImage = context.PreEntityImages.Contains("PreImage") ? context.PreEntityImages["PreImage"] as Entity : null;
-                    if (preImage == null || !preImage.Contains("objectid") || preImage.GetAttributeValue<EntityReference>("objectid").LogicalName.ToLower() != "xom_guyanalearningapplicationaction")
-                    {
-                        tracingService.Trace("PreImage is not available or does not contain valid data.");
-                        return;
-                    }
-
-                    Guid actionId = preImage.GetAttributeValue<EntityReference>("objectid").Id;
-
-                    EntityCollection previousNotes = GetPreviousNotesForAction(actionId, preImage.Id, service);
-
-                    if (previousNotes.Entities.Count > 0)
-                    {
-                        Entity previousNote = previousNotes.Entities[0];
-
-                        tracingService.Trace("Previous note found. Updating action description.");
-
-                        Entity accountEntity = service.Retrieve("action", actionId, new ColumnSet("llm_notes"));
-
-                        string previousNoteText = previousNote.GetAttributeValue<string>("notetext");
-                        string strippedPreviousNoteText = StripHTML(previousNoteText);
-
-                        accountEntity["llm_notes"] = strippedPreviousNoteText;
-                        service.Update(accountEntity);
-
-                        tracingService.Trace("Action description updated with previous note text.");
-                    }
-                    else
-                    {
-                        tracingService.Trace("No previous note found for the action.");
-                    }
-                }
-
-            }
-            catch (Exception ex)
-            {
-                tracingService.Trace("Error occurred: " + ex.ToString());
-                throw new InvalidPluginExecutionException("An error occurred in the CreateNotes plugin.", ex);
-            }
-            finally
-            {
-                tracingService.Trace("Plugin execution completed.");
-            }
-        }
-
-        public static string StripHTML(string input)
-        {
-            if (string.IsNullOrWhiteSpace(input))
-                return string.Empty;
-
-            // Remove HTML tags and &nbsp;
-            string output = Regex.Replace(input, "<.*?>", String.Empty);
-            output = Regex.Replace(output, "&nbsp;", " ", RegexOptions.IgnoreCase);
-            return output;
-        }
-
-        private Entity GetLatestNoteForAction(Guid actionId, IOrganizationService service)
-        {
-            QueryExpression query = new QueryExpression("annotation");
-            query.ColumnSet = new ColumnSet("annotationid", "notetext");
-            query.Criteria.AddCondition("objectid", ConditionOperator.Equal, actionId);
-            query.AddOrder("modifiedon", OrderType.Descending);
-            query.TopCount = 1;
-
-            EntityCollection notes = service.RetrieveMultiple(query);
-            if (notes.Entities.Count > 0)
-            {
-                return notes.Entities[0];
-            }
-            return null;
-        }
-
-        private EntityCollection GetPreviousNotesForAction(Guid actionId, Guid latestNoteId, IOrganizationService service)
-        {
-            QueryExpression query = new QueryExpression("annotation");
-            query.ColumnSet = new ColumnSet("annotationid", "notetext");
-            query.Criteria.AddCondition("objectid", ConditionOperator.Equal, actionId);
-            query.Criteria.AddCondition("annotationid", ConditionOperator.NotEqual, latestNoteId);
-            query.AddOrder("modifiedon", OrderType.Descending);
-            query.TopCount = 1;
-
-            return service.RetrieveMultiple(query);
-        }
-    }
-}
+These user stories cover the requirements for synchronizing notes between the contact entity timeline and a custom field in MS CRM, ensuring a seamless integration and real-time updates across different platforms.
